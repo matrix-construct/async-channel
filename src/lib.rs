@@ -65,6 +65,8 @@ use futures_core::ready;
 use futures_core::stream::Stream;
 use pin_project_lite::pin_project;
 
+pub use event_listener_strategy::event_listener::QueueStrategy;
+
 struct Channel<T> {
     /// Inner message queue.
     queue: ConcurrentQueue<T>,
@@ -133,14 +135,46 @@ impl<T> Channel<T> {
 /// # });
 /// ```
 pub fn bounded<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
+    bounded_with_queue_strategy(cap, (QueueStrategy::Fifo, QueueStrategy::Fifo))
+}
+
+/// Creates a bounded channel with queuing strategies.
+///
+/// The created channel has space to hold at most `cap` messages at a time.
+/// The scheduling variants in the tuple `queue_strategies` are passed to the
+/// Sender and Receiver respectively.
+///
+/// # Panics
+///
+/// Capacity must be a positive number. If `cap` is zero, this function will panic.
+///
+/// # Examples
+///
+/// ```
+/// # futures_lite::future::block_on(async {
+/// use async_channel::{bounded_with_queue_strategy, QueueStrategy, TryRecvError, TrySendError};
+///
+/// let (s, r) = bounded_with_queue_strategy(1, (QueueStrategy::Fifo, QueueStrategy::Lifo));
+///
+/// assert_eq!(s.send(10).await, Ok(()));
+/// assert_eq!(s.try_send(20), Err(TrySendError::Full(20)));
+///
+/// assert_eq!(r.recv().await, Ok(10));
+/// assert_eq!(r.try_recv(), Err(TryRecvError::Empty));
+/// # });
+/// ```
+pub fn bounded_with_queue_strategy<T>(
+    cap: usize,
+    queue_strategies: (QueueStrategy, QueueStrategy),
+) -> (Sender<T>, Receiver<T>) {
     assert!(cap > 0, "capacity cannot be zero");
 
     let channel = Arc::new(Channel {
         queue: ConcurrentQueue::bounded(cap),
-        send_ops: Event::new(),
-        recv_ops: Event::new(),
-        stream_ops: Event::new(),
-        closed_ops: Event::new(),
+        send_ops: Event::new_with_queue_strategy(queue_strategies.0),
+        recv_ops: Event::new_with_queue_strategy(queue_strategies.1),
+        stream_ops: Event::new_with_queue_strategy(queue_strategies.1),
+        closed_ops: Event::new_with_queue_strategy(queue_strategies.1),
         sender_count: AtomicUsize::new(1),
         receiver_count: AtomicUsize::new(1),
     });
@@ -177,12 +211,40 @@ pub fn bounded<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
 /// # });
 /// ```
 pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
+    unbounded_with_queue_strategy((QueueStrategy::Fifo, QueueStrategy::Fifo))
+}
+
+/// Creates an unbounded channel with queuing strategies.
+///
+/// The created channel can hold an unlimited number of messages. The
+/// scheduling variants in the tuple `queue_strategies` are passed to the
+/// Sender and Receiver respectively.
+///
+/// # Examples
+///
+/// ```
+/// # futures_lite::future::block_on(async {
+/// use async_channel::{unbounded_with_queue_strategy, QueueStrategy, TryRecvError};
+///
+/// let (s, r) = unbounded_with_queue_strategy((QueueStrategy::Fifo, QueueStrategy::Lifo));
+///
+/// assert_eq!(s.send(10).await, Ok(()));
+/// assert_eq!(s.send(20).await, Ok(()));
+///
+/// assert_eq!(r.recv().await, Ok(10));
+/// assert_eq!(r.recv().await, Ok(20));
+/// assert_eq!(r.try_recv(), Err(TryRecvError::Empty));
+/// # });
+/// ```
+pub fn unbounded_with_queue_strategy<T>(
+    queue_strategies: (QueueStrategy, QueueStrategy),
+) -> (Sender<T>, Receiver<T>) {
     let channel = Arc::new(Channel {
         queue: ConcurrentQueue::unbounded(),
-        send_ops: Event::new(),
-        recv_ops: Event::new(),
-        stream_ops: Event::new(),
-        closed_ops: Event::new(),
+        send_ops: Event::new_with_queue_strategy(queue_strategies.0),
+        recv_ops: Event::new_with_queue_strategy(queue_strategies.1),
+        stream_ops: Event::new_with_queue_strategy(queue_strategies.1),
+        closed_ops: Event::new_with_queue_strategy(queue_strategies.1),
         sender_count: AtomicUsize::new(1),
         receiver_count: AtomicUsize::new(1),
     });
